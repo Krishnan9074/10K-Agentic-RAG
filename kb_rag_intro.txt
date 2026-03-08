@@ -1,0 +1,13 @@
+**Introduction to RAG Technology**
+
+RAG (**Retrieval-Augmented Generation**) is a technique that combines information retrieval with large language models.
+Its core idea is to first retrieve relevant content from an external knowledge base before generating a response, and then provide the retrieved results to the model as context.
+
+A typical RAG system usually includes the following steps:
+
+1. **Document Chunking**
+2. **Embedding (Vectorization)**
+3. **Similarity Retrieval**
+4. **Answer Generation**
+
+RAG can significantly reduce the probability of large language models generating incorrect or fabricated information (“hallucinations”).

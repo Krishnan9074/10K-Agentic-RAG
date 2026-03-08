@@ -1,0 +1,16 @@
+Python is a high-level, interpreted programming language known for its simple syntax and powerful ecosystem.
+Python supports multiple programming paradigms, including object-oriented, procedural, and functional programming.
+
+Common data types include:
+
+int (integer)
+
+float (floating-point number)
+
+str (string)
+
+list (list)
+
+dict (dictionary)
+
+Python is commonly used for data analysis, artificial intelligence, web development, and automation scripts.

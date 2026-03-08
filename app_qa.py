@@ -50,6 +50,12 @@ if "messages" not in st.session_state:
 
 for message in st.session_state["messages"]:
     with st.chat_message(message["role"]):
+        if message["role"] == "assistant":
+            route = message.get("route", "vectorstore")
+            if route == "vectorstore":
+                st.caption("🔍 Route: Knowledge Base (RAG)")
+            else:
+                st.caption("💬 Route: Direct Answer")
         st.markdown(message["content"])
 
 user_input = st.chat_input("Ask a question...")
@@ -84,13 +90,18 @@ if user_input:
                 }
             }
 
-            response = st.session_state["rag_service"].chain.invoke(
-                {"input": user_input},
-                config=session_config
+            response, route = st.session_state["rag_service"].invoke(
+                user_input,
+                session_config
             )
+
+            if route == "vectorstore":
+                st.caption("🔍 Route: Knowledge Base (RAG)")
+            else:
+                st.caption("💬 Route: Direct Answer")
 
             st.markdown(response)
 
     st.session_state["messages"].append(
-        {"role": "assistant", "content": response}
+        {"role": "assistant", "content": response, "route": route}
     )

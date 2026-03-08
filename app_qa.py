@@ -56,6 +56,17 @@ for message in st.session_state["messages"]:
                 st.caption("🔍 Route: Knowledge Base (RAG)")
             else:
                 st.caption("💬 Route: Direct Answer")
+            if not message.get("grounded", True):
+                st.warning(
+                    f"⚠️ Possible hallucination: {message.get('grounding_reason', '')}",
+                    icon="⚠️"
+                )
+            if message.get("citations"):
+                with st.expander("📄 Sources"):
+                    for c in message["citations"]:
+                        page_info = f" — p.{c['page'] + 1}" if c.get("page") is not None else ""
+                        st.markdown(f"**{c['filename']}**{page_info}")
+                        st.caption(f"> {c['snippet']}...")
         st.markdown(message["content"])
 
 user_input = st.chat_input("Ask a question...")
@@ -90,18 +101,36 @@ if user_input:
                 }
             }
 
-            response, route = st.session_state["rag_service"].invoke(
+            result = st.session_state["rag_service"].invoke(
                 user_input,
                 session_config
             )
 
-            if route == "vectorstore":
+            if result.route == "vectorstore":
                 st.caption("🔍 Route: Knowledge Base (RAG)")
             else:
                 st.caption("💬 Route: Direct Answer")
 
-            st.markdown(response)
+            if not result.grounded:
+                st.warning(
+                    f"⚠️ Possible hallucination: {result.grounding_reason}",
+                    icon="⚠️"
+                )
 
-    st.session_state["messages"].append(
-        {"role": "assistant", "content": response, "route": route}
-    )
+            if result.citations:
+                with st.expander("📄 Sources"):
+                    for c in result.citations:
+                        page_info = f" — p.{c['page'] + 1}" if c.get("page") is not None else ""
+                        st.markdown(f"**{c['filename']}**{page_info}")
+                        st.caption(f"> {c['snippet']}...")
+
+            st.markdown(result.response)
+
+    st.session_state["messages"].append({
+        "role": "assistant",
+        "content": result.response,
+        "route": result.route,
+        "citations": result.citations,
+        "grounded": result.grounded,
+        "grounding_reason": result.grounding_reason,
+    })

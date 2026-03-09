@@ -1,11 +1,25 @@
+import os
 from dotenv import load_dotenv
 load_dotenv()
 
+# Pull from Streamlit secrets when running in Streamlit Cloud,
+# otherwise fall back to environment variables / .env file
+def _secret(key: str) -> str:
+    try:
+        import streamlit as st
+        return st.secrets.get(key, os.environ.get(key, ""))
+    except Exception:
+        return os.environ.get(key, "")
+
 md5_path = "./md5.text"
 
-#Chroma
+# Qdrant — reads from .env locally, from Streamlit secrets in cloud
+qdrant_url     = _secret("QDRANT_URL")
+qdrant_api_key = _secret("QDRANT_API_KEY")
 collection_name = "rag"
-persist_directory = "./chroma_db"
+
+# Groq API key — expose as env var so langchain-groq picks it up automatically
+os.environ.setdefault("GROQ_API_KEY", _secret("GROQ_API_KEY"))
 
 
 #spliter

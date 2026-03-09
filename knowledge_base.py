@@ -5,10 +5,23 @@ import os
 import configure_data as config
 import hashlib
 from filelock import FileLock
-from langchain_chroma import Chroma
+from qdrant_client import QdrantClient
+from qdrant_client.models import Distance, VectorParams
+from langchain_qdrant import QdrantVectorStore
 from langchain_community.embeddings import FastEmbedEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from datetime import datetime
+
+# BAAI/bge-small-en-v1.5 produces 384-dimensional vectors
+_VECTOR_SIZE = 384
+
+def _ensure_collection(client: QdrantClient, collection_name: str) -> None:
+    """Create the Qdrant collection if it does not already exist."""
+    if not client.collection_exists(collection_name):
+        client.create_collection(
+            collection_name=collection_name,
+            vectors_config=VectorParams(size=_VECTOR_SIZE, distance=Distance.COSINE),
+        )
 
 _hash_lock = FileLock(config.md5_path + ".lock")
 
@@ -39,11 +52,15 @@ def is_duplicate_and_register(hash_str: str) -> bool:
 
 class KnowledgeBaseService(object):
     def __init__(self):
-        os.makedirs( config.persist_directory , exist_ok = True)
-        self.chroma = Chroma(
+        client = QdrantClient(
+            url=config.qdrant_url,
+            api_key=config.qdrant_api_key,
+        )
+        _ensure_collection(client, config.collection_name)
+        self.qdrant = QdrantVectorStore(
+            client=client,
             collection_name=config.collection_name,
-            embedding_function=FastEmbedEmbeddings(model_name=config.embedding_model_name),
-            persist_directory=config.persist_directory
+            embedding=FastEmbedEmbeddings(model_name=config.embedding_model_name),
         )
         self.spliter = RecursiveCharacterTextSplitter(
             chunk_size = config.chunk_size,
@@ -66,7 +83,7 @@ class KnowledgeBaseService(object):
             "operator":"admin"
 
         }
-        self.chroma.add_texts(
+        self.qdrant.add_texts(
             knowledge_chunks,
             metadatas=[metadata for _ in knowledge_chunks]
         )

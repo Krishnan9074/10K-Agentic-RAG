@@ -1,11 +1,10 @@
 import configure_data as config
-from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams
 from langchain_qdrant import QdrantVectorStore
 
 _VECTOR_SIZE = 384
 
-def _ensure_collection(client: QdrantClient, collection_name: str) -> None:
+def _ensure_collection(client, collection_name: str) -> None:
     """Create the Qdrant collection if it does not already exist."""
     if not client.collection_exists(collection_name):
         client.create_collection(
@@ -17,10 +16,7 @@ def _ensure_collection(client: QdrantClient, collection_name: str) -> None:
 class VectorStoreService(object):
     def __init__(self, embedding):
         self.embedding = embedding
-        client = QdrantClient(
-            url=config.qdrant_url,
-            api_key=config.qdrant_api_key,
-        )
+        client = config.make_qdrant_client()
         _ensure_collection(client, config.collection_name)
         self.vector_store = QdrantVectorStore(
             client=client,

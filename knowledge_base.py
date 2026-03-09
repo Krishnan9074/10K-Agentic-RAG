@@ -5,7 +5,6 @@ import os
 import configure_data as config
 import hashlib
 from filelock import FileLock
-from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams
 from langchain_qdrant import QdrantVectorStore
 from langchain_community.embeddings import FastEmbedEmbeddings
@@ -15,7 +14,7 @@ from datetime import datetime
 # BAAI/bge-small-en-v1.5 produces 384-dimensional vectors
 _VECTOR_SIZE = 384
 
-def _ensure_collection(client: QdrantClient, collection_name: str) -> None:
+def _ensure_collection(client, collection_name: str) -> None:
     """Create the Qdrant collection if it does not already exist."""
     if not client.collection_exists(collection_name):
         client.create_collection(
@@ -52,10 +51,7 @@ def is_duplicate_and_register(hash_str: str) -> bool:
 
 class KnowledgeBaseService(object):
     def __init__(self):
-        client = QdrantClient(
-            url=config.qdrant_url,
-            api_key=config.qdrant_api_key,
-        )
+        client = config.make_qdrant_client()
         _ensure_collection(client, config.collection_name)
         self.qdrant = QdrantVectorStore(
             client=client,

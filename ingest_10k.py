@@ -7,7 +7,6 @@ warnings.filterwarnings("ignore")
 
 import pdfplumber
 from knowledge_base import KnowledgeBaseService
-from qdrant_client import QdrantClient
 import configure_data as config
 
 FILES = [
@@ -38,6 +37,6 @@ for path in FILES:
     print(f"  Status: {result}")
 
 # Summary
-client = QdrantClient(url=config.qdrant_url, api_key=config.qdrant_api_key)
+client = config.make_qdrant_client()
 info = client.get_collection(config.collection_name)
 print(f"\nTotal vectors in Qdrant: {info.points_count}")

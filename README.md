@@ -1,291 +1,138 @@
 # 10K Agentic RAG
 
-> An adaptive Retrieval-Augmented Generation (RAG) system for querying SEC 10-K annual reports and custom documents — powered by Groq LLMs, Qdrant vector search, and Streamlit.
+> Ask anything about any US public company. It pulls **10-K, 10-Q, 8-K, Form 3, Form 4
+> and XBRL financials** straight from SEC EDGAR, parses them into sections and structured
+> tables, indexes them in Qdrant + SQLite, and answers with an agent that cites every claim.
+> No data files, no manual ingestion.
 
-[![Live Demo](https://img.shields.io/badge/Live%20Demo-Streamlit-FF4B4B?logo=streamlit&logoColor=white)](https://10k-agentic-rag.streamlit.app/)
-[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://python.org)
-[![LangChain](https://img.shields.io/badge/LangChain-Orchestration-1C3C3C?logo=langchain)](https://langchain.com)
-[![Groq](https://img.shields.io/badge/Groq-LLM%20Inference-F54E42)](https://groq.com)
+[![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://python.org)
+[![OpenRouter](https://img.shields.io/badge/LLM-OpenRouter-6566F1)](https://openrouter.ai)
 [![Qdrant](https://img.shields.io/badge/Qdrant-Vector%20Search-DC244C)](https://qdrant.tech)
-
-**[Try the live app →](https://10k-agentic-rag.streamlit.app/)**
-
----
-
-## Table of Contents
-
-- [Overview](#overview)
-- [Features](#features)
-- [Architecture](#architecture)
-- [Tech Stack](#tech-stack)
-- [Project Structure](#project-structure)
-- [Getting Started](#getting-started)
-  - [Prerequisites](#prerequisites)
-  - [Installation](#installation)
-  - [Environment Variables](#environment-variables)
-  - [Ingest Documents](#ingest-documents)
-  - [Run the App](#run-the-app)
-- [Usage](#usage)
-  - [QA Interface](#qa-interface)
-  - [File Upload](#file-upload)
-- [Configuration](#configuration)
-- [Deployment](#deployment)
-- [Security Considerations](#security-considerations)
-- [License](#license)
+[![Streamlit](https://img.shields.io/badge/UI-Streamlit-FF4B4B?logo=streamlit&logoColor=white)](https://streamlit.io)
 
 ---
 
-## Overview
+## What it does
 
-10K Agentic RAG is an intelligent document Q&A system that lets you ask natural-language questions about SEC 10-K filings from **Alphabet (2024)**, **Amazon (2024)**, and **Microsoft**, as well as any custom documents you upload. It uses an adaptive routing strategy to decide whether a question needs document retrieval or can be answered directly, then verifies answers for hallucinations before presenting them.
-
----
-
-## Features
-
-| Feature | Description |
+| | |
 |---|---|
-| **Adaptive Query Routing** | Automatically classifies each question — routes factual/financial queries to RAG, conversational queries to direct LLM answer |
-| **Grounding / Hallucination Check** | Post-generation verification that flags answers not fully supported by retrieved context |
-| **Source Citations** | Every RAG answer includes clickable source snippets with document name and page number |
-| **Multi-Model Selection** | Choose between Groq-hosted `llama-3.3-70b-versatile`, `llama-3.1-8b-instant`, or `gemma2-9b-it` at runtime |
-| **File Upload** | Upload `.txt` or `.pdf` files (up to 10 MB) to extend the knowledge base on the fly |
-| **Persistent Chat History** | Conversations are stored per session so context is preserved across page refreshes |
-| **Duplicate Detection** | SHA-256 hashing prevents the same document from being indexed twice |
-| **Rate Limiting** | 20 requests per minute per session to prevent API abuse |
-| **Local Embeddings** | Uses `BAAI/bge-small-en-v1.5` via FastEmbed — no third-party embedding API key required |
-| **Pre-loaded 10-K Reports** | Alphabet, Amazon, and Microsoft annual reports are ingested out of the box |
-
----
+| **Zero-touch data** | Ask about any company and it is fetched from EDGAR on the fly. On first launch the watchlist (`AAPL, MSFT, GOOGL, AMZN` by default) is ingested in the background, and every tracked company is refreshed every 12h. |
+| **5 SEC forms + XBRL** | **10-K** and **10-Q** split into their SEC Items (Risk Factors, MD&A, Financial Statements…), **8-K** split by Item *plus* its EX-99 press releases, **Form 3/4** insider XML parsed into transactions and holdings, **XBRL companyfacts** into exact financial series. |
+| **Agentic retrieval** | A planner extracts tickers, forms, sections, years and tools from the question, then does multi-query, per-company, soft-filtered vector search and calls SQL tools for exact numbers. |
+| **Exact numbers, not guesses** | Revenue, margins, FCF, EPS etc. come from XBRL tables and insider stats from SQL, so the LLM doesn't read figures off text chunks. |
+| **Citations + verification** | Every claim is cited `[S#]` (filing text, links to EDGAR) or `[T#]` (SQL tool). A second model then lists any unsupported claims. |
+| **Insider Radar** | Open-market buys and sells by insider, share of sales under 10b5-1 plans, a trade timeline, and **insider selling in the 30 days before each 8-K**. |
+| **Filing Diff** | Paragraph-level year-over-year diff of any Item (new, removed and *reworded* risk factors) with an AI "what changed" summary. |
+| **Financials & Events** | Compare up to 4 companies on any metric, statements, derived ratios, 8-K timeline with red-flag items (impairments, restatements, auditor changes, defaults, cyber incidents). |
+| **Bring your own docs** | Upload PDFs or text (transcripts, notes) into the same index. |
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│                     Streamlit Frontend                    │
-│     ┌──────────────────┐   ┌──────────────────────┐      │
-│     │  QA Interface    │   │  File Upload Page     │      │
-│     │  (app_qa.py)     │   │ (app_file_uploader.py)│      │
-│     └────────┬─────────┘   └──────────┬───────────┘      │
-└──────────────┼──────────────────────  ┼ ───────────────── ┘
-               │                        │
-               ▼                        ▼
-┌──────────────────────────────────────────────────────────┐
-│                     RAG Service (rag.py)                  │
-│                                                           │
-│  ① Query Router        ② Retrieval        ③ Answer       │
-│  (llama-3.1-8b)        (Qdrant k=6)       (chosen LLM)   │
-│        │                    │                  │          │
-│        ▼                    ▼                  ▼          │
-│  direct_answer?     Vector similarity     ④ Grounding     │
-│  vectorstore?       search → docs         check (LLM)     │
-└──────────────────────────────────────────────────────────┘
-               │                                │
-               ▼                                ▼
-┌─────────────────────────┐     ┌───────────────────────────┐
-│  Qdrant Cloud           │     │  Groq Inference API       │
-│  (384-dim cosine index) │     │  (LLaMA 3 / Gemma 2)      │
-└─────────────────────────┘     └───────────────────────────┘
-               ▲
-               │  (ingest)
-┌─────────────────────────┐
-│  Knowledge Base         │
-│  ├─ Alphabet 10-K 2024  │
-│  ├─ Amazon 10-K 2024    │
-│  ├─ Microsoft 10-K      │
-│  ├─ Company Policy      │
-│  ├─ Python Basics       │
-│  └─ RAG Introduction    │
-└─────────────────────────┘
+            ┌──────────────── SEC EDGAR (rate-limited ≤8 req/s, disk-cached) ───────────────┐
+            │ submissions API · filing index · primary docs · EX-99 exhibits · companyfacts  │
+            └───────────────────────────────────┬────────────────────────────────────────────┘
+                                                ▼
+ secrag/parsers      html.py      iXBRL/HTML → text (tables kept as "a | b | c" rows)
+                     sections.py  10-K / 10-Q / 8-K → SEC Items (TOC + cross-ref safe)
+                     form345.py   Form 3/4/5 ownershipDocument XML → rows + narrative
+                     xbrl.py      companyfacts → deduplicated annual/quarterly/instant facts
+                                                │
+ secrag/pipeline     ingest.py    parse → chunk (context headers) → embed → upsert
+                     jobs.py      background queue · watchlist bootstrap · auto-refresh
+                        ┌───────────────────────┴───────────────────────┐
+                        ▼                                               ▼
+     Qdrant (Cloud or embedded)                              SQLite
+     chunks + payload: ticker, form, FY,           filings registry · insider_transactions
+     section, accession, EDGAR url                  xbrl_facts · events_8k · companies
+                        └───────────────────────┬───────────────────────┘
+                                                ▼
+ secrag/agent/rag.py   plan (fast model) → auto-ingest → retrieve + SQL tools
+                       → answer (chosen model, streamed, cited) → grounding check
+                                                ▼
+ Streamlit  app.py → Ask · Financials & Events · Insider Radar · Filing Diff · Companies · Upload
+ CLI        python -m secrag ingest | refresh | watch | status | ask
 ```
 
-### Adaptive RAG Flow
-
-1. **Route** — A lightweight `llama-3.1-8b-instant` model classifies the query as `vectorstore` or `direct_answer`.
-2. **Retrieve** — For `vectorstore` queries, the top-6 most relevant document chunks are fetched from Qdrant using cosine similarity.
-3. **Answer** — The user-selected model generates an answer strictly grounded in the retrieved context.
-4. **Verify** — A grounding-check call confirms whether the answer is fully supported; a warning is shown if not.
-5. **Cite** — Source document filename, page number, and a text snippet are surfaced in the UI.
-
----
-
-## Tech Stack
-
-| Layer | Technology |
-|---|---|
-| **Frontend** | [Streamlit](https://streamlit.io) |
-| **LLM Inference** | [Groq](https://groq.com) — LLaMA 3.3 70B, LLaMA 3.1 8B, Gemma 2 9B |
-| **Embeddings** | [FastEmbed](https://github.com/qdrant/fastembed) — `BAAI/bge-small-en-v1.5` (local, 384-dim) |
-| **Vector Database** | [Qdrant Cloud](https://qdrant.tech) (cosine similarity) |
-| **LLM Orchestration** | [LangChain](https://langchain.com) |
-| **PDF Parsing** | [pdfplumber](https://github.com/jsvine/pdfplumber) |
-| **Chat History** | File-based JSON store (`chat_history/`) |
-| **Local Vector Store** | [ChromaDB](https://www.trychroma.com) (used by file upload page) |
-
----
-
-## Project Structure
-
-```
-.
-├── app_qa.py               # Streamlit QA chat interface (main page)
-├── app_file_uploader.py    # Streamlit file upload page
-├── rag.py                  # Core RAG service: router, retrieval, grounding
-├── vector_stores.py        # Qdrant vector store wrapper
-├── knowledge_base.py       # Document ingestion & dedup logic
-├── ingest_10k.py           # One-time script to load 10-K PDFs into Qdrant
-├── history_store.py        # File-based chat history (LangChain compatible)
-├── file_history_store.py   # Per-session history helper
-├── configure_data.py       # All configuration constants & secret loading
-├── requirements.txt        # Python dependencies (pinned)
-├── runtime.txt             # Python version for Streamlit Cloud
-├── md5.text                # SHA-256 hashes of ingested documents (dedup store)
-├── kb_company_policy.txt   # Sample company policy knowledge base doc
-├── kb_python_basics.txt    # Sample Python basics knowledge base doc
-├── kb_rag_intro.txt        # Sample RAG introduction knowledge base doc
-├── chat_history/           # Persistent per-session chat history (JSON)
-└── chroma_db/              # Local ChromaDB data (file upload page)
-```
-
----
-
-## Getting Started
-
-### Prerequisites
-
-- Python 3.11 or higher
-- A [Qdrant Cloud](https://cloud.qdrant.io) account (free tier works)
-- A [Groq](https://console.groq.com) API key (free tier available)
-
-### Installation
+## Quick start
 
 ```bash
-# 1. Clone the repository
-git clone <your-repo-url>
-cd <repo-directory>
-
-# 2. Create and activate a virtual environment
-python -m venv .venv
-source .venv/bin/activate        # macOS / Linux
-# .venv\Scripts\activate         # Windows
-
-# 3. Install dependencies
+git clone https://github.com/Krishnan9074/10K-Agentic-RAG.git
+cd 10K-Agentic-RAG
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+cp .env.example .env        # add OPENROUTER_API_KEY and your SEC_USER_AGENT email
+streamlit run app.py
 ```
 
-### Environment Variables
+That's it. No Qdrant server is needed (an embedded instance lives in `./data/qdrant`), and the
+watchlist starts ingesting as soon as the app opens. Dashboards and ingestion work without an
+API key; chat, summaries and grounding checks need one.
 
-Create a `.env` file in the project root:
+### Environment
 
-```env
-QDRANT_URL=https://<your-cluster-id>.us-east4-0.gcp.cloud.qdrant.io
-QDRANT_API_KEY=<your-qdrant-api-key>
-GROQ_API_KEY=<your-groq-api-key>
-```
-
-| Variable | Description |
-|---|---|
-| `QDRANT_URL` | Your Qdrant Cloud cluster URL |
-| `QDRANT_API_KEY` | Qdrant Cloud API key |
-| `GROQ_API_KEY` | Groq API key for LLM inference |
-
-> **Streamlit Cloud**: Add these as [Streamlit Secrets](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/secrets-management) instead of a `.env` file.
-
-### Ingest Documents
-
-Place your 10-K PDF files in the project root, then run the ingestion script once:
-
-```bash
-python ingest_10k.py
-```
-
-Expected files (configured in `ingest_10k.py`):
-- `Alphabet 10K 2024_compressed.pdf`
-- `Amazon 10K 2024_compressed.pdf`
-- `MSFT 10-K_compressed.pdf`
-- `kb_company_policy.txt`
-- `kb_python_basics.txt`
-- `kb_rag_intro.txt`
-
-The script chunks and embeds each document, uploads vectors to Qdrant, and uses SHA-256 hashing to skip any previously ingested file.
-
-### Run the App
-
-```bash
-# QA Chat Interface
-streamlit run app_qa.py
-
-# File Upload Page
-streamlit run app_file_uploader.py
-```
-
-Open [http://localhost:8501](http://localhost:8501) in your browser.
-
----
-
-## Usage
-
-### QA Interface
-
-1. **Select a model** from the dropdown (`llama-3.3-70b-versatile` is recommended for best accuracy).
-2. **Type your question** in the chat input — e.g.:
-   - *"What was Alphabet's total revenue in 2024?"*
-   - *"Summarize Amazon's risk factors."*
-   - *"Compare Microsoft and Alphabet's cloud revenue."*
-3. The system automatically **routes** the query, **retrieves** relevant chunks, and **answers** with citations.
-4. Expand **📄 Sources** under any answer to see the exact document and page a fact came from.
-5. A **⚠️ Possible hallucination** warning appears if the answer isn't well-supported by the retrieved context.
-
-### File Upload
-
-1. Navigate to the **Information Upload System** page (`app_file_uploader.py`).
-2. Upload a `.txt` or `.pdf` file (max **10 MB**).
-3. The file is chunked and ingested into the vector store — it becomes immediately queryable in the QA interface.
-4. Duplicate uploads are automatically detected and skipped.
-
----
-
-## Configuration
-
-All tunable parameters live in `configure_data.py`:
-
-| Parameter | Default | Description |
+| Variable | Required | Default |
 |---|---|---|
-| `chunk_size` | `1000` | Characters per document chunk |
-| `chunk_overlap` | `100` | Overlap between consecutive chunks |
-| `similarity_threshold` | `6` | Number of chunks retrieved per query (top-k) |
-| `embedding_model_name` | `BAAI/bge-small-en-v1.5` | FastEmbed local embedding model |
-| `chat_model_name` | `llama-3.3-70b-versatile` | Default Groq chat model |
-| `collection_name` | `rag` | Qdrant collection name |
-| `separators` | `["\n\n", "\n", "。", ...]` | Text split separators (supports CJK) |
+| `OPENROUTER_API_KEY` | for chat/summaries | – |
+| `SEC_USER_AGENT` | recommended (SEC asks for a contact email) | placeholder |
+| `OPENROUTER_MODEL` | no | `anthropic/claude-sonnet-5.5` |
+| `OPENROUTER_FAST_MODEL` | no (planner + fact-checker) | `google/gemini-3.8-flash` |
+| `QDRANT_URL`, `QDRANT_API_KEY` | no (use Qdrant Cloud) | embedded Qdrant |
+| `SECRAG_WATCHLIST` | no | `AAPL,MSFT,GOOGL,AMZN` |
+| `SECRAG_AUTO_REFRESH_HOURS` | no (`0` disables) | `12` |
+| `SECRAG_DATA_DIR` | no | `./data` |
 
----
+Any OpenRouter model slug works, and you can switch models in the sidebar.
 
-## Deployment
+### CLI
 
-This app is deployable to [Streamlit Community Cloud](https://streamlit.io/cloud) with zero infrastructure changes.
+```bash
+python -m secrag ingest NVDA TSLA JPM                 # default: 3 years, 10-K/10-Q/8-K/3/4 + XBRL
+python -m secrag ingest AAPL --forms 10-K --years 8   # deeper history for Filing Diff
+python -m secrag refresh                              # new filings for every tracked company
+python -m secrag watch --hours 6                      # long-running refresher (or use cron)
+python -m secrag status
+python -m secrag ask "Did Nvidia insiders sell before the last earnings 8-K?"
+```
 
-1. Push your code to a public or private GitHub repository.
-2. Go to [share.streamlit.io](https://share.streamlit.io) and connect your repo.
-3. Set the **main file path** to `app_qa.py`.
-4. Add `QDRANT_URL`, `QDRANT_API_KEY`, and `GROQ_API_KEY` under **Secrets**.
-5. Deploy — Streamlit Cloud automatically reads `runtime.txt` for the Python version.
+Default per-company pull: last 3 years, up to 3×10-K, 4×10-Q, 12×8-K, 25×Form 3, 100×Form 4,
+plus the full XBRL history. A 125-filing company takes about 1–2 minutes. Re-runs are
+incremental: an ingest registry skips filings already indexed, and deterministic vector ids
+make re-indexing idempotent.
 
-> The app is already live at **[https://10k-agentic-rag.streamlit.app/](https://10k-agentic-rag.streamlit.app/)**.
+## Example questions
 
----
+- *Compare Apple and Microsoft revenue, operating margin and free cash flow over the last 3 years.*
+- *What new risk factors did Nvidia add in its latest 10-K?*
+- *Have Tesla insiders been buying or selling? How much was under 10b5-1 plans?*
+- *Summarize Amazon's latest earnings press release and the segment results.*
+- *Any red-flag 8-Ks for Boeing in the last two years?*
 
-## Security Considerations
+## Tests
 
-- **Prompt injection protection**: The RAG system prompt explicitly instructs the LLM to treat retrieved document content as read-only reference material and ignore any instructions embedded within it.
-- **File validation**: Uploaded files are verified by both extension and magic bytes (for PDFs) before parsing.
-- **File size limits**: Upload size is capped at 10 MB to prevent resource exhaustion.
-- **Rate limiting**: Each session is limited to 20 requests per minute.
-- **No credentials in code**: All secrets are loaded from environment variables or Streamlit Secrets — never hardcoded.
-- **Duplicate prevention**: SHA-256 content hashing prevents re-ingestion of identical documents.
+```bash
+pip install -r requirements-dev.txt
+pytest                                   # offline parser/diff/chunking tests
+RUN_LIVE=1 pytest tests/test_live_edgar.py -s   # real EDGAR → SQLite → Qdrant round trip
+```
 
----
+## Deploying (Streamlit Community Cloud)
+
+Set the main file to **`app.py`** and add `OPENROUTER_API_KEY`, `SEC_USER_AGENT` and
+(recommended, since cloud disks are ephemeral) `QDRANT_URL` / `QDRANT_API_KEY` as secrets.
+
+## Security notes
+
+- Retrieved filing text is treated as untrusted: prompts forbid following instructions inside sources.
+- SQL tools use parameterized queries only; the LLM never writes SQL.
+- Uploads are validated by extension + magic bytes and capped at 10 MB; chat is rate limited per session.
+- Secrets come from env / Streamlit secrets only.
+
+## Roadmap
+
+See [ROADMAP.md](ROADMAP.md).
 
 ## License
 
-This project is provided for educational and demonstration purposes. See [LICENSE](LICENSE) for details.
+Educational and demonstration purposes. SEC data is public domain; respect SEC's
+[fair access policy](https://www.sec.gov/os/accessing-edgar-data).

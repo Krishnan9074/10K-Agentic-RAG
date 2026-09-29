@@ -2,7 +2,10 @@
 .streamlit/secrets.toml
 __pycache__/
 *.pyc
-chroma_db/
-chat_history/
-md5.text
 .venv/
+.pytest_cache/
+.DS_Store
+# Everything pulled from EDGAR / generated at runtime
+data/
+chat_history/
+*.pdf

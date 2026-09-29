@@ -87,6 +87,11 @@ def qdrant_api_key() -> str:
 # --------------------------------------------------------------------------- #
 EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
 EMBEDDING_DIM = 384
+# ONNX memory grows with batch size and with every distinct input length: on real
+# filings batch 64 peaks ~1.5 GB, batch 4 (length-sorted) ~0.5 GB and is no slower.
+# Keep it small for 1 GB hosts like Streamlit Cloud.
+EMBED_BATCH_SIZE = int(secret("SECRAG_EMBED_BATCH_SIZE", "4"))
+EMBED_THREADS = int(secret("SECRAG_EMBED_THREADS", "2"))
 CHUNK_SIZE = 1200
 CHUNK_OVERLAP = 150
 TOP_K = 8

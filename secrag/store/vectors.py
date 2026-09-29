@@ -55,7 +55,8 @@ class VectorStore:
 
         self.client = _make_client()
         self.collection = config.COLLECTION_NAME
-        self._embedder = TextEmbedding(model_name=config.EMBEDDING_MODEL)
+        self._embedder = TextEmbedding(model_name=config.EMBEDDING_MODEL,
+                                       threads=config.EMBED_THREADS)
         self._embed_lock = threading.Lock()
         # Embedded Qdrant is not safe for concurrent writers/readers (background ingest + chat).
         self._io = threading.RLock()
@@ -78,8 +79,16 @@ class VectorStore:
 
     # ------------------------------------------------------------------ #
     def embed(self, texts: list[str]) -> list[list[float]]:
+        # Embed in length order so each batch pads to a similar length (less ONNX
+        # memory churn), then restore the caller's order.
+        order = sorted(range(len(texts)), key=lambda i: len(texts[i]))
         with self._embed_lock:
-            return [v.tolist() for v in self._embedder.embed(texts, batch_size=64)]
+            vecs = list(self._embedder.embed([texts[i] for i in order],
+                                             batch_size=config.EMBED_BATCH_SIZE))
+        out: list[list[float]] = [[] for _ in texts]
+        for pos, i in enumerate(order):
+            out[i] = vecs[pos].tolist()
+        return out
 
     def embed_query(self, text: str) -> list[float]:
         with self._embed_lock:
